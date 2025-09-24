@@ -1,97 +1,210 @@
-Richtig erkannt — wenn für dein Mint / i386 (trixi) kein fertiges Kismet-Package vorhanden ist, bleibt nur selbst kompilieren. Unten bekommst du ein praktisches, copy-paste-fähiges Build-Recipe + Troubleshooting-Tipps (für native i386 build). Ich zitiere die offiziellen Kismet-Docs für die wichtigsten Punkte.  ￼
+# Kismet Build Guide – Linux Mint i386 (Trixie)
 
-⸻
+Da es für i386/Trixie keine fertigen Pakete gibt, wird Kismet hier aus dem Quellcode kompiliert.  
+Dieses Dokument ist vollständig, copy-paste-fähig und für GitHub geeignet.
 
-Schritt-für-Schritt: Kismet selbst kompilieren (i386 / Linux Mint)
+---
 
-Hinweis: das hier baut Kismet nativ auf dem i386-System. Wenn dein Rechner x86_64 ist und du ein i386 Package brauchst, ist das Cross-Compile / Docker-Build (siehe weiter unten) — deutlich komplexer.
+## Inhalt
 
-	1.	Optional: prüfe deine Mint/Ubuntu-Codename
+- Systeminformationen prüfen
+- Schneller Weg: Build-Script
+- Inhalt des Build-Scripts
+- Manuelle Schritte
+- Troubleshooting
+- Verifikation
 
+---
+
+## Systeminformationen prüfen
+
+```bash
 lsb_release -a
-# oder nur codename:
-lsb_release -cs
+uname -m
+lsb_release -cs    # Ausgabe: Codename (z. B. trixie)
+```
 
-	2.	Paket-Updates + grundlegende Build-Tools
+---
+
+## Schneller Weg: Build-Script
+
+Speichere folgendes Script als `build_kismet_i386.sh`, mache es ausführbar und starte es:
+
+```bash
+chmod +x build_kismet_i386.sh
+./build_kismet_i386.sh
+```
+
+---
+
+## Inhalt von `build_kismet_i386.sh`
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+echo "== Kismet Build Script (i386) =="
+
+CODENAME="$(lsb_release -cs 2>/dev/null || true)"
+ARCH="$(uname -m)"
+echo "Detected: codename='$CODENAME' arch='$ARCH'"
+
+read -p "Continue? (y/n) " yn
+if [[ "$yn" != "y" ]]; then
+  exit 1
+fi
 
 sudo apt update
 sudo apt upgrade -y
-sudo apt install -y build-essential git pkg-config
-
-	3.	Installiere die üblichen Kismet-Build-Abhängigkeiten (Debian/Ubuntu/Mint)
+sudo apt install -y build-essential git pkg-config curl gpg ca-certificates
 
 sudo apt install -y \
-  libwebsockets-dev zlib1g-dev libnl-3-dev libnl-genl-3-dev libcap-dev libpcap-dev \
-  libnm-dev libdw-dev libsqlite3-dev libprotobuf-dev libprotobuf-c-dev \
-  protobuf-compiler protobuf-c-compiler libsensors-dev libusb-1.0-0-dev \
-  python3 python3-setuptools python3-protobuf python3-requests \
-  python3-numpy python3-serial python3-usb python3-dev python3-websockets \
-  libubertooth-dev libbtbb-dev libmosquitto-dev librtlsdr-dev
+  libpcap-dev libnl-3-dev libnl-genl-3-dev libcap-dev \
+  libsqlite3-dev libprotobuf-dev protobuf-compiler \
+  python3 python3-dev python3-setuptools python3-requests \
+  python3-protobuf python3-websockets python3-numpy \
+  python3-serial python3-usb libusb-1.0-0-dev librtlsdr-dev \
+  libmosquitto-dev libsensors-dev || true
 
-	•	Wenn einige Paketnamen auf i386 oder in deiner Mint-Trixie/Trisquid-Variante fehlen, such mit apt search <paket> oder passe Namen (z. B. libsensors4-dev vs libsensors-dev). Die offizielle Liste ist in den Kismet Docs.  ￼
+if sudo apt install -y libwebsockets-dev; then
+  echo "libwebsockets-dev installed"
+else
+  echo "libwebsockets-dev missing, will try without"
+fi
 
-	4.	Git-Checkout Kismet
+TMPDIR=$(mktemp -d)
+cd "$TMPDIR"
+git clone https://www.kismetwireless.net/git/kismet.git
+cd kismet
 
+if ldconfig -p | grep -q libwebsockets; then
+  ./configure
+else
+  ./configure --disable-libwebsockets
+fi
+
+JOBS=$(nproc)
+if [ "$(free -m | awk '/^Mem:/ {print $2}')" -lt 8000 ]; then
+  JOBS=2
+fi
+make -j"$JOBS"
+
+sudo make suidinstall
+sudo usermod -aG kismet "$USER"
+
+echo "Build finished."
+echo "Reboot or log out/in, then run 'kismet' and open http://localhost:2501"
+```
+
+---
+
+## Manuelle Installation
+
+### Abhängigkeiten installieren
+
+```bash
+sudo apt update
+sudo apt install -y build-essential git pkg-config curl gpg ca-certificates \
+  libpcap-dev libnl-3-dev libnl-genl-3-dev libcap-dev \
+  libsqlite3-dev libprotobuf-dev protobuf-compiler \
+  python3 python3-dev python3-setuptools python3-requests \
+  python3-protobuf python3-websockets python3-numpy \
+  python3-serial python3-usb libusb-1.0-0-dev librtlsdr-dev \
+  libmosquitto-dev libsensors-dev
+```
+
+Optional (falls verfügbar):
+
+```bash
+sudo apt install -y libwebsockets-dev
+```
+
+---
+
+### Quellcode holen
+
+```bash
 cd /tmp
 git clone https://www.kismetwireless.net/git/kismet.git
 cd kismet
-# optional: checkout release tag, z.B. git checkout stable-2024-xx
+```
 
-	5.	Configure (prüft System und fehlende libs)
+---
 
+### Konfigurieren
+
+```bash
 ./configure
+# Falls libwebsockets fehlt:
+# ./configure --disable-libwebsockets
+```
 
-	•	Lies die Zusammenfassung am Ende! Fehlende Dev-Pakete werden hier angezeigt.  ￼
+---
 
-	6.	Falls libwebsockets Probleme macht (häufige Stolperfalle), zwei Optionen:
+### Kompilieren
 
-	•	a) Installiere/upgrade libwebsockets-dev aus einer neueren Quelle, oder
-	•	b) Deaktiviere beim Configure (kein remote capture über libwebsockets dann):
-
-./configure --disable-libwebsockets
-
-(Die WebUI bleibt, aber Remote-capture über die moderne libwebsockets-API ist eingeschränkt.)  ￼
-	7.	Compile
-
-# optional: setze version (empfohlen)
+```bash
 make version
-
-# kompiliere (falls wenig RAM: kleiner -j)
 make -j$(nproc)
-# falls OOM oder Fehler, wiederholen mit z.B. make -j2
+```
 
-	•	Warnung: moderner C++ Build kann RAM brauchen; bei <16 GB RAM beschränke -j (siehe Docs).  ￼
+Bei wenig RAM ggf.:
 
-	8.	Installieren (suid-capture helper, empfohlen)
+```bash
+make -j2
+```
 
+---
+
+### Installieren
+
+```bash
 sudo make suidinstall
-
-	•	Das erstellt die kismet Gruppe und installiert die capture-binaries als suid-root, was sicherer ist als das komplette Server-Binary als root laufen zu lassen. Danach deine User zur Gruppe hinzufügen:
-
 sudo usermod -aG kismet $USER
-# neu einloggen oder reboot
+```
 
-(Genauer Ablauf steht bei Kismet Install Docs.)  ￼
-	9.	Starten / prüfen
+Re-login oder Reboot notwendig.
 
-# lokal als normaler User (suid helper erlaubt capture)
+---
+
+## Starten & Verifizieren
+
+```bash
 kismet
-# Web UI: http://localhost:2501
-# oder systemd (falls installiert): sudo systemctl start kismet
+```
 
+Im Browser öffnen:
 
-⸻
+```
+http://localhost:2501
+```
 
-Troubleshooting / Tipps (i386 / Trixie spezifisch)
-	•	Fehlende dev-pakete: auf i386 können manche neueren libs nicht in Repos sein. apt search hilft; ggf. musst du einzelne libs aus Source kompilieren (z. B. libwebsockets).  ￼
-	•	Build in Docker / chroot: Kismet-Packaging nutzt Docker images für reproducible builds (inkl. i386/amd). Wenn native Build zu stressig ist, baue in einer passenden Docker/i386 build-container. Repo kismet-packages enthält Docker build scripts.  ￼
-	•	Speicherfehler beim Kompilieren: limitiere -j, oder füge Swap temporär hinzu.
-	•	Wenn du nur Remote-Capture Node bauen willst (z. B. kleines Sensor-Box ohne WebUI), check ./configure Optionen und die Remote Capture Docs (kann Abhängigkeiten verringern).  ￼
+---
 
-⸻
+## Troubleshooting
 
-Wenn du möchtest — ich mache das nächste:
-	•	Ich kann dir direkt die fertigen, ausgefüllten Befehle für dein System erzeugen, wenn du mir kurz die Ausgabe von lsb_release -cs und uname -m hier reinkopierst (dann passe ich Paketliste evtl. an).
-	•	Oder ich schreibe ein kleines shell-Script (build_kismet_i386.sh) das Abhängigkeiten prüft, ./configure ausführt (mit optional --disable-libwebsockets), compiliert und suidinstall macht — fertig zum Ausführen.
+- **Fehlende Pakete**: Ausgabe von `./configure` lesen und mit `apt install <paket>` nachinstallieren.
+- **OOM (Out of Memory)**: `make -j1` nutzen oder temporären Swap anlegen:
+  ```bash
+  sudo fallocate -l 4G /swapfile
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile
+  sudo swapon /swapfile
+  ```
+- **libwebsockets nicht verfügbar**: entweder aus Source bauen oder `--disable-libwebsockets` nutzen.
+- **Capture funktioniert nicht**: Stelle sicher, dass `suidinstall` genutzt wurde und dein Benutzer in der Gruppe `kismet` ist.
+- **Interface kein Monitor Mode**: prüfen mit `iw dev`, ggf. Treiberproblem.
 
-Sag mir kurz: willst du das Script (automatisch) oder die manuelle Command-Liste so wie oben reicht dir?
+---
+
+## Fertig!
+
+Checkliste:
+
+- [x] Dependencies installiert  
+- [x] Kismet kompiliert (`make`)  
+- [x] Installiert (`sudo make suidinstall`)  
+- [x] Benutzer zur Gruppe `kismet` hinzugefügt  
+- [x] Start mit `kismet` → Web UI unter `http://localhost:2501`
+
+---
