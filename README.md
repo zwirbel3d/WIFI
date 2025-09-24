@@ -1,104 +1,97 @@
-# WIFI
+Richtig erkannt — wenn für dein Mint / i386 (trixi) kein fertiges Kismet-Package vorhanden ist, bleibt nur selbst kompilieren. Unten bekommst du ein praktisches, copy-paste-fähiges Build-Recipe + Troubleshooting-Tipps (für native i386 build). Ich zitiere die offiziellen Kismet-Docs für die wichtigsten Punkte.  ￼
 
-# Kismet & LinSSID auf Linux Mint (kostenlos) — Install & Run
+⸻
 
-> Linux Mint ist Ubuntu-basiert. Alle Befehle unten sind für `apt`. Von oben nach unten ausführen.
+Schritt-für-Schritt: Kismet selbst kompilieren (i386 / Linux Mint)
 
----
+Hinweis: das hier baut Kismet nativ auf dem i386-System. Wenn dein Rechner x86_64 ist und du ein i386 Package brauchst, ist das Cross-Compile / Docker-Build (siehe weiter unten) — deutlich komplexer.
 
-## 1) System aktualisieren
+	1.	Optional: prüfe deine Mint/Ubuntu-Codename
+
+lsb_release -a
+# oder nur codename:
+lsb_release -cs
+
+	2.	Paket-Updates + grundlegende Build-Tools
+
 sudo apt update
 sudo apt upgrade -y
+sudo apt install -y build-essential git pkg-config
 
----
+	3.	Installiere die üblichen Kismet-Build-Abhängigkeiten (Debian/Ubuntu/Mint)
 
-## 2) Basis-Tools (Treiber/CLI)
-sudo apt install -y software-properties-common build-essential \
-  wireless-tools iw wpasupplicant net-tools curl
+sudo apt install -y \
+  libwebsockets-dev zlib1g-dev libnl-3-dev libnl-genl-3-dev libcap-dev libpcap-dev \
+  libnm-dev libdw-dev libsqlite3-dev libprotobuf-dev libprotobuf-c-dev \
+  protobuf-compiler protobuf-c-compiler libsensors-dev libusb-1.0-0-dev \
+  python3 python3-setuptools python3-protobuf python3-requests \
+  python3-numpy python3-serial python3-usb python3-dev python3-websockets \
+  libubertooth-dev libbtbb-dev libmosquitto-dev librtlsdr-dev
 
----
+	•	Wenn einige Paketnamen auf i386 oder in deiner Mint-Trixie/Trisquid-Variante fehlen, such mit apt search <paket> oder passe Namen (z. B. libsensors4-dev vs libsensors-dev). Die offizielle Liste ist in den Kismet Docs.  ￼
 
-## 3) Kismet installieren & starten
-# Installation (Repo-Version)
-sudo apt install -y kismet
+	4.	Git-Checkout Kismet
 
-# Start (Web-UI auf Port 2501)
-sudo kismet
-# Browser öffnen: http://localhost:2501
+cd /tmp
+git clone https://www.kismetwireless.net/git/kismet.git
+cd kismet
+# optional: checkout release tag, z.B. git checkout stable-2024-xx
 
----
+	5.	Configure (prüft System und fehlende libs)
 
-## 4) LinSSID installieren & starten
-# Versuch mit Mint/Ubuntu-Repos
-sudo apt install -y linssid
+./configure
 
-# Falls Paket nicht gefunden/veraltet: PPA hinzufügen
-sudo add-apt-repository -y ppa:wseverin/ppa
-sudo apt update
-sudo apt install -y linssid
+	•	Lies die Zusammenfassung am Ende! Fehlende Dev-Pakete werden hier angezeigt.  ￼
 
-# Starten
-linssid
+	6.	Falls libwebsockets Probleme macht (häufige Stolperfalle), zwei Optionen:
 
----
+	•	a) Installiere/upgrade libwebsockets-dev aus einer neueren Quelle, oder
+	•	b) Deaktiviere beim Configure (kein remote capture über libwebsockets dann):
 
-## 5) LinSSID Troubleshooting (fehlende Abhängigkeiten)
+./configure --disable-libwebsockets
 
-# Automatisch reparieren
-sudo apt --fix-broken install -y
-sudo apt update
-sudo apt install -f -y
+(Die WebUI bleibt, aber Remote-capture über die moderne libwebsockets-API ist eingeschränkt.)  ￼
+	7.	Compile
 
-# Häufig nötige Libs
-sudo apt install -y libqt5core5a libqt5gui5 libqt5widgets5 \
-  libqt5network5 libqt5svg5 qtmultimedia5-dev \
-  libqwt-qt5-dev libpcap0.8 libpcap0.8-dev \
-  libnl-3-dev libnl-genl-3-dev pkg-config
+# optional: setze version (empfohlen)
+make version
 
-# Falls nötig: Build aus Source
-sudo apt install -y git qtbase5-dev qtmultimedia5-dev qmake make
-git clone https://git.code.sf.net/p/linssid/linssid linssid
-cd linssid
-qmake
-make -j"$(nproc)"
-sudo make install
+# kompiliere (falls wenig RAM: kleiner -j)
+make -j$(nproc)
+# falls OOM oder Fehler, wiederholen mit z.B. make -j2
 
----
+	•	Warnung: moderner C++ Build kann RAM brauchen; bei <16 GB RAM beschränke -j (siehe Docs).  ￼
 
-## 6) Schnelltests
-# Interface prüfen
-iw dev
+	8.	Installieren (suid-capture helper, empfohlen)
 
-# Schnellliste (Signal in %)
-nmcli -f SSID,BSSID,SIGNAL,CHAN dev wifi list
+sudo make suidinstall
 
-# Detaillierter Scan mit dBm (Interface anpassen)
-sudo iw dev wlan0 scan | egrep 'BSS|SSID|signal' -B2
+	•	Das erstellt die kismet Gruppe und installiert die capture-binaries als suid-root, was sicherer ist als das komplette Server-Binary als root laufen zu lassen. Danach deine User zur Gruppe hinzufügen:
 
----
+sudo usermod -aG kismet $USER
+# neu einloggen oder reboot
 
-## 7) Monitor-Mode + CSV-Logging (aircrack-ng)
-sudo apt install -y aircrack-ng
-sudo airmon-ng start wlan0
-sudo airodump-ng -w capture --output-format csv wlan0mon
-# Ergebnis: capture-01.csv
+(Genauer Ablauf steht bei Kismet Install Docs.)  ￼
+	9.	Starten / prüfen
 
----
+# lokal als normaler User (suid helper erlaubt capture)
+kismet
+# Web UI: http://localhost:2501
+# oder systemd (falls installiert): sudo systemctl start kismet
 
-## 8) Hersteller/OUI-Lookup
-# Offline
-curl -O https://standards-oui.ieee.org/oui.txt
-grep -i 'AA-BB-CC' oui.txt
 
-# Online
-curl -s "https://api.macvendors.com/AA:BB:CC:11:22:33"
+⸻
 
----
+Troubleshooting / Tipps (i386 / Trixie spezifisch)
+	•	Fehlende dev-pakete: auf i386 können manche neueren libs nicht in Repos sein. apt search hilft; ggf. musst du einzelne libs aus Source kompilieren (z. B. libwebsockets).  ￼
+	•	Build in Docker / chroot: Kismet-Packaging nutzt Docker images für reproducible builds (inkl. i386/amd). Wenn native Build zu stressig ist, baue in einer passenden Docker/i386 build-container. Repo kismet-packages enthält Docker build scripts.  ￼
+	•	Speicherfehler beim Kompilieren: limitiere -j, oder füge Swap temporär hinzu.
+	•	Wenn du nur Remote-Capture Node bauen willst (z. B. kleines Sensor-Box ohne WebUI), check ./configure Optionen und die Remote Capture Docs (kann Abhängigkeiten verringern).  ￼
 
-## 9) Typische Fehlerbehebungen
-sudo apt --fix-broken install -y
-sudo apt update
-sudo add-apt-repository -y universe
-sudo apt update
-sudo apt install -y linssid
-linssid
+⸻
+
+Wenn du möchtest — ich mache das nächste:
+	•	Ich kann dir direkt die fertigen, ausgefüllten Befehle für dein System erzeugen, wenn du mir kurz die Ausgabe von lsb_release -cs und uname -m hier reinkopierst (dann passe ich Paketliste evtl. an).
+	•	Oder ich schreibe ein kleines shell-Script (build_kismet_i386.sh) das Abhängigkeiten prüft, ./configure ausführt (mit optional --disable-libwebsockets), compiliert und suidinstall macht — fertig zum Ausführen.
+
+Sag mir kurz: willst du das Script (automatisch) oder die manuelle Command-Liste so wie oben reicht dir?
